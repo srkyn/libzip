@@ -26,7 +26,7 @@ jobs:
       - name: install dependencies (Linux)
         if: ${{ runner.os == 'Linux' }}
         run: |
-          sudo apt-get install libzstd-dev
+          sudo apt-get install libacl1-dev libzstd-dev
       - name: install latest CMake and Ninja for lukka/run-vcpkg (Windows)
         if: ${{ runner.os == 'Windows' }}
         uses: lukka/get-cmake@latest

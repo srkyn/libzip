@@ -39,6 +39,11 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#if defined(HAVE_ACL_FREE) && defined(HAVE_ACL_GET_FILE) && defined(HAVE_ACL_SET_FILE)
+#define USE_ACL
+#include <sys/acl.h>
+#include <sys/types.h>
+#endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -386,12 +391,31 @@ static FILE *_zip_fopen_close_on_exec(const char *name, bool writeable) {
 
 static bool copy_permissions(zip_source_file_context_t *ctx) {
     zip_os_stat_t st;
+#ifdef USE_ACL
+    acl_t acl;
+#endif
 
     if (zip_os_stat(ctx->fname, &st) < 0) {
         zip_error_set(&ctx->error, ZIP_ER_RENAME, errno);
         return false;
     }
-    /* TODO: copy ACLs */
+#ifdef USE_ACL
+    if ((acl = acl_get_file(ctx->fname, ACL_TYPE_ACCESS)) == NULL) {
+        if (errno != ENOTSUP && errno != EOPNOTSUPP) {
+            zip_error_set(&ctx->error, ZIP_ER_RENAME, errno);
+            return false;
+        }
+    }
+    else {
+        if (acl_set_file(ctx->tmpname, ACL_TYPE_ACCESS, acl) < 0) {
+            int saved_errno = errno;
+            (void)acl_free(acl);
+            zip_error_set(&ctx->error, ZIP_ER_RENAME, saved_errno);
+            return false;
+        }
+        (void)acl_free(acl);
+    }
+#endif
     if (chmod(ctx->tmpname, st.st_mode) < 0) {
         zip_error_set(&ctx->error, ZIP_ER_RENAME, errno);
         return false;

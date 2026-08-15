@@ -23,6 +23,11 @@
 #cmakedefine HAVE__STRTOI64
 #cmakedefine HAVE__STRTOUI64
 #cmakedefine HAVE__UNLINK
+#cmakedefine HAVE_ACL_FREE
+#cmakedefine HAVE_ACL_FROM_TEXT
+#cmakedefine HAVE_ACL_GET_FILE
+#cmakedefine HAVE_ACL_SET_FILE
+#cmakedefine HAVE_ACL_TO_TEXT
 #cmakedefine HAVE_ARC4RANDOM
 #cmakedefine HAVE_CLONEFILE
 #cmakedefine HAVE_COMMONCRYPTO

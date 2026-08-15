@@ -66,6 +66,7 @@
 #cmakedefine HAVE_NDIR_H
 #cmakedefine HAVE_SYS_DIR_H
 #cmakedefine HAVE_SYS_NDIR_H
+#cmakedefine HAVE_SYS_XATTR_H
 #cmakedefine WORDS_BIGENDIAN
 #cmakedefine HAVE_SHARED
 /* END DEFINES */

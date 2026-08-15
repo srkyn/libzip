@@ -159,6 +159,7 @@ endif()
 
 check_include_files(stdbool.h HAVE_STDBOOL_H)
 check_include_files(strings.h HAVE_STRINGS_H)
+check_include_files(sys/xattr.h HAVE_SYS_XATTR_H)
 check_include_files(unistd.h HAVE_UNISTD_H)
 
 check_include_files(inttypes.h HAVE_INTTYPES_H_LIBZIP)

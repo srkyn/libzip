@@ -39,6 +39,9 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#if defined(__linux__) && defined(HAVE_SYS_XATTR_H)
+#include <sys/xattr.h>
+#endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -55,6 +58,9 @@
 #endif
 
 static int create_temp_file(zip_source_file_context_t *ctx, bool create_file);
+#if defined(__linux__) && defined(HAVE_SYS_XATTR_H)
+static bool copy_posix_access_acl(zip_source_file_context_t *ctx, int fd);
+#endif
 
 static zip_int64_t _zip_stdio_op_commit_write(zip_source_file_context_t *ctx);
 static zip_int64_t _zip_stdio_op_create_temp_output(zip_source_file_context_t *ctx);
@@ -317,14 +323,30 @@ static int create_temp_file(zip_source_file_context_t *ctx, bool create_file) {
         }
 
         if (create_file) {
-            if ((fd = open(temp, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, mode == -1 ? 0666 : (mode_t)mode)) >= 0) {
+            /* Keep replacement files private until the original access policy has been applied. */
+            if ((fd = open(temp, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, mode == -1 ? 0666 : 0600)) >= 0) {
                 if (mode != -1) {
+#if defined(__linux__) && defined(HAVE_SYS_XATTR_H)
+                    if (!copy_posix_access_acl(ctx, fd)) {
+                        (void)close(fd);
+                        (void)remove(temp);
+                        free(temp);
+                        return -1;
+                    }
+#endif
                     /* open() honors umask(), which we don't want in this case */
 #ifdef HAVE_FCHMOD
-                    (void)fchmod(fd, (mode_t)mode);
+                    if (fchmod(fd, (mode_t)mode) < 0) {
 #else
-                    (void)chmod(temp, (mode_t)mode);
+                    if (chmod(temp, (mode_t)mode) < 0) {
 #endif
+                        int saved_errno = errno;
+                        (void)close(fd);
+                        (void)remove(temp);
+                        free(temp);
+                        zip_error_set(&ctx->error, ZIP_ER_TMPOPEN, saved_errno);
+                        return -1;
+                    }
                 }
                 break;
             }
@@ -352,6 +374,61 @@ static int create_temp_file(zip_source_file_context_t *ctx, bool create_file) {
 
     return fd; /* initialized to 0 if !create_file */
 }
+
+
+#if defined(__linux__) && defined(HAVE_SYS_XATTR_H)
+static bool copy_posix_access_acl(zip_source_file_context_t *ctx, int fd) {
+    static const char acl_name[] = "system.posix_acl_access";
+    void *acl_data;
+    ssize_t acl_size;
+    ssize_t read_size;
+
+    if (ctx->f != NULL) {
+        acl_size = fgetxattr(fileno(ctx->f), acl_name, NULL, 0);
+    }
+    else {
+        acl_size = getxattr(ctx->fname, acl_name, NULL, 0);
+    }
+    if (acl_size < 0) {
+        if (errno == ENODATA || errno == ENOTSUP || errno == EOPNOTSUPP) {
+            return true;
+        }
+        zip_error_set(&ctx->error, ZIP_ER_TMPOPEN, errno);
+        return false;
+    }
+
+    if (acl_size == 0) {
+        return true;
+    }
+    if ((acl_data = malloc((size_t)acl_size)) == NULL) {
+        zip_error_set(&ctx->error, ZIP_ER_MEMORY, 0);
+        return false;
+    }
+
+    if (ctx->f != NULL) {
+        read_size = fgetxattr(fileno(ctx->f), acl_name, acl_data, (size_t)acl_size);
+    }
+    else {
+        read_size = getxattr(ctx->fname, acl_name, acl_data, (size_t)acl_size);
+    }
+    if (read_size < 0) {
+        int saved_errno = errno;
+        free(acl_data);
+        zip_error_set(&ctx->error, ZIP_ER_TMPOPEN, saved_errno);
+        return false;
+    }
+
+    if (fsetxattr(fd, acl_name, acl_data, (size_t)read_size, 0) < 0) {
+        int saved_errno = errno;
+        free(acl_data);
+        zip_error_set(&ctx->error, ZIP_ER_TMPOPEN, saved_errno);
+        return false;
+    }
+
+    free(acl_data);
+    return true;
+}
+#endif
 
 
 /*

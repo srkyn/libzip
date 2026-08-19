@@ -39,10 +39,9 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/stat.h>
-#if defined(HAVE_ACL_FREE) && defined(HAVE_ACL_GET_FILE) && defined(HAVE_ACL_SET_FILE)
+#if defined(__linux__) && defined(HAVE_GETXATTR) && defined(HAVE_SETXATTR)
 #define USE_ACL
-#include <sys/acl.h>
-#include <sys/types.h>
+#include <sys/xattr.h>
 #endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -391,29 +390,42 @@ static FILE *_zip_fopen_close_on_exec(const char *name, bool writeable) {
 
 static bool copy_permissions(zip_source_file_context_t *ctx) {
     zip_os_stat_t st;
-#ifdef USE_ACL
-    acl_t acl;
-#endif
 
     if (zip_os_stat(ctx->fname, &st) < 0) {
         zip_error_set(&ctx->error, ZIP_ER_RENAME, errno);
         return false;
     }
 #ifdef USE_ACL
-    if ((acl = acl_get_file(ctx->fname, ACL_TYPE_ACCESS)) == NULL) {
-        if (errno != ENOTSUP && errno != EOPNOTSUPP) {
+    static const char acl_name[] = "system.posix_acl_access";
+    void *acl_data;
+    ssize_t acl_size;
+
+    acl_size = getxattr(ctx->fname, acl_name, NULL, 0);
+    if (acl_size < 0) {
+        if (errno != ENODATA && errno != ENOTSUP && errno != EOPNOTSUPP) {
             zip_error_set(&ctx->error, ZIP_ER_RENAME, errno);
             return false;
         }
     }
-    else {
-        if (acl_set_file(ctx->tmpname, ACL_TYPE_ACCESS, acl) < 0) {
+    else if (acl_size > 0) {
+        if ((acl_data = malloc((size_t)acl_size)) == NULL) {
+            zip_error_set(&ctx->error, ZIP_ER_MEMORY, 0);
+            return false;
+        }
+        acl_size = getxattr(ctx->fname, acl_name, acl_data, (size_t)acl_size);
+        if (acl_size < 0) {
             int saved_errno = errno;
-            (void)acl_free(acl);
+            free(acl_data);
             zip_error_set(&ctx->error, ZIP_ER_RENAME, saved_errno);
             return false;
         }
-        (void)acl_free(acl);
+        if (setxattr(ctx->tmpname, acl_name, acl_data, (size_t)acl_size, 0) < 0) {
+            int saved_errno = errno;
+            free(acl_data);
+            zip_error_set(&ctx->error, ZIP_ER_RENAME, saved_errno);
+            return false;
+        }
+        free(acl_data);
     }
 #endif
     if (chmod(ctx->tmpname, st.st_mode) < 0) {

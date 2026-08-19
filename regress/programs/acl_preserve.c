@@ -5,37 +5,61 @@
 
 #include "config.h"
 
+#include <endian.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/acl.h>
-#include <sys/types.h>
+#include <sys/xattr.h>
 
 #include "zip.h"
 
-static char *get_acl_text(const char *path) {
-    acl_t acl;
-    char *text;
+#define ACL_EA_ACCESS "system.posix_acl_access"
+#define ACL_EA_VERSION 0x0002
+#define ACL_UNDEFINED_ID UINT32_MAX
 
-    if ((acl = acl_get_file(path, ACL_TYPE_ACCESS)) == NULL) {
-        return NULL;
-    }
-    text = acl_to_text(acl, NULL);
-    (void)acl_free(acl);
-    return text;
+#define ACL_USER_OBJ 0x01
+#define ACL_USER 0x02
+#define ACL_GROUP_OBJ 0x04
+#define ACL_MASK 0x10
+#define ACL_OTHER 0x20
+
+#define ACL_READ 0x04
+#define ACL_WRITE 0x02
+
+struct acl_header {
+    uint32_t version;
+};
+
+struct acl_entry {
+    uint16_t tag;
+    uint16_t permissions;
+    uint32_t id;
+};
+
+struct test_acl {
+    struct acl_header header;
+    struct acl_entry entries[5];
+};
+
+static void set_entry(struct acl_entry *entry, uint16_t tag, uint16_t permissions, uint32_t id) {
+    entry->tag = htole16(tag);
+    entry->permissions = htole16(permissions);
+    entry->id = htole32(id);
 }
 
 int main(void) {
     static const char archive_name[] = "acl-preserve.zip";
     static const char contents[] = "data";
-    static const char acl_text[] = "u::rw-,u:65534:rw-,g::---,m::rw-,o::---";
-    char *before = NULL;
-    char *after = NULL;
-    acl_t acl = NULL;
+    unsigned char before[sizeof(struct test_acl)];
+    unsigned char after[sizeof(struct test_acl)];
+    struct test_acl acl;
     zip_source_t *source = NULL;
     zip_t *archive = NULL;
     zip_error_t error;
+    ssize_t before_length;
+    ssize_t after_length;
     int error_code;
     int result = 1;
 
@@ -66,22 +90,24 @@ int main(void) {
     }
     archive = NULL;
 
-    if ((acl = acl_from_text(acl_text)) == NULL) {
-        perror("cannot create test ACL");
-        goto done;
-    }
-    if (acl_set_file(archive_name, ACL_TYPE_ACCESS, acl) < 0) {
-        if (errno == ENOTSUP || errno == EOPNOTSUPP || errno == EPERM || errno == EINVAL) {
+    acl.header.version = htole32(ACL_EA_VERSION);
+    set_entry(&acl.entries[0], ACL_USER_OBJ, ACL_READ | ACL_WRITE, ACL_UNDEFINED_ID);
+    set_entry(&acl.entries[1], ACL_USER, ACL_READ | ACL_WRITE, 65534);
+    set_entry(&acl.entries[2], ACL_GROUP_OBJ, 0, ACL_UNDEFINED_ID);
+    set_entry(&acl.entries[3], ACL_MASK, ACL_READ | ACL_WRITE, ACL_UNDEFINED_ID);
+    set_entry(&acl.entries[4], ACL_OTHER, 0, ACL_UNDEFINED_ID);
+
+    if (setxattr(archive_name, ACL_EA_ACCESS, &acl, sizeof(acl), 0) < 0) {
+        if (errno == ENOTSUP || errno == EOPNOTSUPP || errno == EPERM) {
             result = 77;
             goto done;
         }
-        perror("cannot set test ACL");
+        perror("setxattr");
         goto done;
     }
-    (void)acl_free(acl);
-    acl = NULL;
-    if ((before = get_acl_text(archive_name)) == NULL) {
-        perror("cannot read ACL before replacement");
+    before_length = getxattr(archive_name, ACL_EA_ACCESS, before, sizeof(before));
+    if (before_length < 0) {
+        perror("getxattr before");
         goto done;
     }
 
@@ -98,12 +124,11 @@ int main(void) {
     }
     archive = NULL;
 
-    if ((after = get_acl_text(archive_name)) == NULL || strcmp(before, after) != 0) {
+    after_length = getxattr(archive_name, ACL_EA_ACCESS, after, sizeof(after));
+    if (after_length != before_length || memcmp(before, after, (size_t)before_length) != 0) {
         fprintf(stderr, "POSIX access ACL changed during archive replacement\n");
         goto done;
     }
-    (void)acl_free(after);
-    after = NULL;
 
     zip_error_init(&error);
     source = zip_source_file_create(archive_name, 0, -1, &error);
@@ -123,7 +148,8 @@ int main(void) {
     source = NULL;
     zip_error_fini(&error);
 
-    if ((after = get_acl_text(archive_name)) == NULL || strcmp(before, after) != 0) {
+    after_length = getxattr(archive_name, ACL_EA_ACCESS, after, sizeof(after));
+    if (after_length != before_length || memcmp(before, after, (size_t)before_length) != 0) {
         fprintf(stderr, "POSIX access ACL changed during direct source replacement\n");
         goto done;
     }
@@ -137,15 +163,6 @@ done:
     }
     if (source != NULL) {
         zip_source_free(source);
-    }
-    if (acl != NULL) {
-        (void)acl_free(acl);
-    }
-    if (before != NULL) {
-        (void)acl_free(before);
-    }
-    if (after != NULL) {
-        (void)acl_free(after);
     }
     (void)remove(archive_name);
     return result;

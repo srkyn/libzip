@@ -10,10 +10,6 @@ set(ZIP_INCLUDE_DIRS
 
 set(ZIP_LIBRARIES ZLIB::ZLIB)
 
-if(ACL_LIBRARIES)
-  set(ZIP_LIBRARIES ${ZIP_LIBRARIES} ${ACL_LIBRARIES})
-endif()
-
 set(ZIP_SOURCES
   siphash.c
   zip_add.c

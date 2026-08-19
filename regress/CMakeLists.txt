@@ -9,7 +9,7 @@ set(TEST_PROGRAMS
   source_seek
 )
 
-if(HAVE_ACL_FREE AND HAVE_ACL_FROM_TEXT AND HAVE_ACL_GET_FILE AND HAVE_ACL_SET_FILE AND HAVE_ACL_TO_TEXT)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND HAVE_GETXATTR AND HAVE_SETXATTR)
   list(APPEND TEST_PROGRAMS acl_preserve)
 endif()
 
@@ -33,9 +33,6 @@ foreach(PROGRAM IN LISTS ZIP_PROGRAMS)
   else()
     add_executable(${PROGRAM} programs/${PROGRAM}.c)
     target_link_libraries(${PROGRAM} zip)
-    if(PROGRAM STREQUAL "acl_preserve" AND ACL_LIBRARIES)
-      target_link_libraries(${PROGRAM} ${ACL_LIBRARIES})
-    endif()
     if (ENABLE_COVERAGE)
       target_compile_options(${PROGRAM} PRIVATE -coverage)
       target_link_options(${PROGRAM} PRIVATE -coverage)
